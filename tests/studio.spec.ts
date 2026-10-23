@@ -5,6 +5,8 @@ test('visual editing, YAML validation, undo, and local persistence', async ({ pa
   const browserErrors: string[] = [];
   page.on('pageerror', error => browserErrors.push(error.message));
   await page.goto('/');
+  await expect(page).toHaveTitle('LinkML Studio - OSDU Ready');
+  await expect(page.locator('.brand')).toContainText('OSDU Ready');
   await expect(page.getByText('LinkML valid', { exact: true })).toBeVisible();
   await expect(page.locator('.class-card')).toHaveCount(2);
   await page.getByRole('textbox', { name: 'New class name' }).fill('Study');

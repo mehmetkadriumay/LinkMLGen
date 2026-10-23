@@ -27,7 +27,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 load_dotenv(Path(__file__).with_name(".env"))
 logger = logging.getLogger(__name__)
-app = FastAPI(title="LinkML Studio", version="0.1.0")
+app = FastAPI(title="LinkML Studio - OSDU Ready", version="0.1.0")
 IMPORTS_DIRECTORY = Path(__file__).parent / "imports"
 SAFE_YAML_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
 

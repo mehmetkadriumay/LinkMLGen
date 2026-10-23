@@ -25,6 +25,7 @@ code, pre { font-family: Consolas, monospace; }
 .topbar { height: 82px; background: #101d31; color: #ecf2f9; display: flex; align-items: center; gap: 30px; padding: 0 26px; border-bottom: 3px solid #188e80; }
 .brand { display: flex; align-items: center; gap: 12px; font-size: 21px; flex-shrink: 0; }
 .brand strong { font-weight: 400; color: #63d3be; }
+.brand .osdu-ready { display: inline-block; vertical-align: middle; padding: 4px 6px; border: 1px solid #3b645f; border-radius: 4px; color: #79e0ca; font-size: 10px; font-weight: 600; }
 .brand small { display: block; font-family: 'DM Sans', sans-serif; font-size: 8px; letter-spacing: 1.65px; color: #9aaec5; margin-top: 4px; }
 .logo { color: #79e0ca; background: #223749; border: 1px solid #3b645f; border-radius: 10px; padding: 6px 9px; font-weight: 800; }
 .logo span { color: white; font-size: 15px; }

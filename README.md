@@ -1,4 +1,4 @@
-# LinkML Studio
+# LinkML Studio - OSDU Ready
 
 A local-first AI-assisted LinkML schema builder: guided conversation, a draggable class diagram, property editing, controlled vocabularies, YAML import/export, undo/redo, and JSON Schema export.
 

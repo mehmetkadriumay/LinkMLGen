@@ -257,7 +257,7 @@ export default function App() {
 
   return <div className="app">
     <header className="topbar">
-      <div className="brand"><span className="logo">L<span>m</span></span><div>LinkML <strong>Studio</strong><small>FROM IDEAS TO CONNECTED DATA</small></div></div>
+      <div className="brand"><span className="logo">L<span>m</span></span><div>LinkML <strong>Studio</strong> <span className="osdu-ready">OSDU Ready</span><small>FROM IDEAS TO CONNECTED DATA</small></div></div>
       <div className="project-name">{schema.name}<span className="badge">LOCAL WORKSPACE</span></div>
       <div className="toolbar">
         <button disabled={locked || historyIndex === 0} onClick={() => void commit(history[historyIndex - 1], historyIndex - 1)}>Undo</button>
