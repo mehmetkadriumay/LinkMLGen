@@ -1,0 +1,8 @@
+fastapi>=0.115,<1
+uvicorn>=0.34,<1
+linkml>=1.12.1,<2
+linkml-runtime>=1.12.1,<2
+openai>=1.68,<3
+python-dotenv>=1,<2
+pytest>=8,<10
+httpx>=0.28,<1
