@@ -1,5 +1,65 @@
 import { expect, test } from '@playwright/test';
 import { parse } from 'yaml';
+import { readFile } from 'node:fs/promises';
+
+test('downloads OSDU registrations, manifest templates and PostgreSQL DDL', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByText('LinkML valid', { exact: true })).toBeVisible();
+  await page.getByLabel('Selected class').selectOption('Person');
+  await page.getByLabel('Schema authority', { exact: true }).fill('custom');
+  await page.getByLabel('Schema source', { exact: true }).fill('test');
+  const schemas = page.getByRole('button', { name: 'Export OSDU schemas + registrations', exact: true });
+  await schemas.click();
+  await expect(page.getByRole('alert')).toContainText('explicit export version');
+  await page.getByRole('button', { name: 'Dismiss', exact: true }).click();
+  await page.getByLabel('Export version override').fill('1.0.0');
+
+  for (const [button, filename] of [
+    ['Export OSDU schemas + registrations', 'osdu-schemas.zip'],
+    ['Export OSDU manifest templates', 'osdu-manifests.zip'],
+    ['Export PostgreSQL DDL (whole model)', 'schema.postgresql.sql'],
+  ]) {
+    const event = page.waitForEvent('download');
+    await page.getByRole('button', { name: button, exact: true }).click();
+    const downloaded = await event;
+    expect(downloaded.suggestedFilename()).toBe(filename);
+    const path = await downloaded.path();
+    if (!path) throw new Error('Expected a local download file.');
+    const contents = await readFile(path);
+    if (filename.endsWith('.zip')) expect(contents.subarray(0, 2).toString()).toBe('PK');
+    else {
+      expect(contents.toString()).toContain('CREATE TABLE "Person"');
+      expect(contents.toString()).toContain('BEGIN;');
+    }
+    await expect(page.locator('.diagnostics')).toContainText('Export downloaded');
+  }
+
+  await page.getByRole('button', { name: 'YAML', exact: true }).click();
+  await page.getByRole('textbox', { name: 'LinkML YAML editor' }).fill('classes: [');
+  await expect(schemas).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Export OSDU manifest templates' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Export PostgreSQL DDL (whole model)' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Export Fabric Lakehouse (whole model)' })).toBeDisabled();
+});
+
+test('downloads Fabric notebook and Spark SQL artifacts for the configured Lakehouse schema', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByText('LinkML valid', { exact: true })).toBeVisible();
+  await page.getByLabel('Fabric Lakehouse schema').fill('analytics');
+  const request = page.waitForRequest('**/api/export/fabric');
+  const download = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Export Fabric Lakehouse (whole model)' }).click();
+  const payload = (await request).postDataJSON();
+  expect(payload.target_schema).toBe('analytics');
+  expect(payload.yaml).toContain('Person:');
+  expect(payload.class_names).toBeUndefined();
+  const artifact = await download;
+  expect(artifact.suggestedFilename()).toBe('fabric-lakehouse.zip');
+  const path = await artifact.path();
+  if (!path) throw new Error('Expected the Fabric export download.');
+  expect((await readFile(path)).subarray(0, 2).toString()).toBe('PK');
+  await expect(page.locator('.diagnostics')).toContainText('Export downloaded');
+});
 
 test('visual editing, YAML validation, undo, and local persistence', async ({ page }) => {
   const browserErrors: string[] = [];

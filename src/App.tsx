@@ -12,13 +12,14 @@ type Message = { role: 'user' | 'assistant'; content: string };
 type Proposal = { message: string; questions: string[]; proposed_yaml: string | null; validation_errors: string[]; validation_warnings?: string[] };
 type Validation = { valid: boolean; errors: string[]; warnings: string[]; schema: Schema | null; ranges: string[] };
 type ClassNode = Node<{ name: string; description: string; slots: Record<string, Slot> }, 'class'>;
+type Artifact = { content: Blob; filename: string; warningCount: number };
 const primitives = ['string', 'integer', 'float', 'double', 'boolean', 'date', 'datetime', 'uri', 'uriorcurie', 'decimal', 'time'];
 const welcome: Message = {
   role: 'assistant',
   content: 'Let\'s build a model together. What kind of data are you working with, and what do you want to do with it? You can start from the example, import YAML, or describe a new domain.',
 };
 
-async function api<T>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
+async function api<T>(path: string, body?: unknown, signal?: AbortSignal, decode?: (response: Response) => Promise<T>): Promise<T> {
   const response = await fetch(`/api/${path}`, body === undefined ? { signal } : {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal,
   });
@@ -26,11 +27,18 @@ async function api<T>(path: string, body?: unknown, signal?: AbortSignal): Promi
     const error = await response.json();
     throw new Error(typeof error.detail === 'string' ? error.detail : JSON.stringify(error.detail));
   }
-  return response.json() as Promise<T>;
+  return decode ? decode(response) : response.json() as Promise<T>;
 }
 
-function download(name: string, content: string, type: string) {
-  const url = URL.createObjectURL(new Blob([content], { type }));
+async function readArtifact(response: Response): Promise<Artifact> {
+  const filename = response.headers.get('Content-Disposition')?.match(/filename="([^"]+)"/)?.[1];
+  const count = response.headers.get('X-Export-Warning-Count');
+  if (!filename || count === null || !/^\d+$/.test(count)) throw new Error('The export response is missing download metadata.');
+  return { content: await response.blob(), filename, warningCount: Number(count) };
+}
+
+function download(name: string, content: string | Blob, type: string) {
+  const url = URL.createObjectURL(content instanceof Blob ? content : new Blob([content], { type }));
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = name;
@@ -97,13 +105,19 @@ export default function App() {
   const [slotRange, setSlotRange] = useState('string');
   const [enumName, setEnumName] = useState('');
   const [enumValues, setEnumValues] = useState('');
+  const [exportScope, setExportScope] = useState('selected');
+  const [exportAuthority, setExportAuthority] = useState('osdu');
+  const [exportSource, setExportSource] = useState('wks');
+  const [exportVersion, setExportVersion] = useState('');
+  const [exportGroup, setExportGroup] = useState('master-data');
+  const [fabricSchema, setFabricSchema] = useState('dbo');
   const currentYaml = useRef(yaml);
   const flow = useRef<ReactFlowInstance<ClassNode> | null>(null);
   currentYaml.current = yaml;
   const dirty = draft !== yaml;
   const locked = busy || dirty;
 
-  async function request<T>(path: string, body: unknown, label: string): Promise<T> {
+  async function request<T>(path: string, body: unknown, label: string, decode?: (response: Response) => Promise<T>): Promise<T> {
     if (pending.current && !pending.current.signal.aborted) throw new Error('Another operation is already in progress.');
     const controller = new AbortController();
     pending.current = controller;
@@ -112,7 +126,7 @@ export default function App() {
       'The request timed out after 5 minutes. Your YAML is preserved; check the backend and retry.', 'TimeoutError',
     )), 300_000);
     try {
-      const result = await api<T>(path, body, controller.signal);
+      const result = await api<T>(path, body, controller.signal, decode);
       controller.signal.throwIfAborted();
       return result;
     } catch (error) {
@@ -134,6 +148,26 @@ export default function App() {
   function reportFailure(error: unknown) {
     if (isCanceled(error)) return;
     setErrors([String(error)]); setStatus('Request failed · YAML is preserved');
+  }
+
+  async function exportArtifact(format: 'schemas' | 'manifests' | 'postgresql' | 'fabric') {
+    setErrors([]);
+    try {
+      const relational = format === 'postgresql' || format === 'fabric';
+      if (!relational && exportScope === 'selected' && !selected) throw new Error('Select a class to export.');
+      const result = await request<Artifact>(
+        relational ? `export/${format}` : `export/osdu/${format}`,
+        format === 'fabric' ? { yaml, target_schema: fabricSchema } : format === 'postgresql' ? { yaml } : {
+          yaml, class_names: exportScope === 'selected' ? [selected] : [],
+          authority: exportAuthority, source: exportSource, version: exportVersion || null, group_type: exportGroup,
+        },
+        format === 'fabric' ? 'Generating Fabric Lakehouse notebook and Spark SQL' :
+          format === 'postgresql' ? 'Generating PostgreSQL DDL' : `Generating OSDU ${format}`,
+        readArtifact,
+      );
+      download(result.filename, result.content, result.content.type);
+      setStatus(result.warningCount ? `Export downloaded · ${result.warningCount} notices; review the export report or SQL comments` : 'Export downloaded');
+    } catch (error) { reportFailure(error); }
   }
 
   useEffect(() => {
@@ -429,6 +463,30 @@ export default function App() {
           try { const result = await request<{ json_schema: string }>('export/json-schema', { yaml }, 'Generating JSON Schema'); download(`${schema.name}.schema.json`, result.json_schema, 'application/json'); }
           catch (error) { reportFailure(error); }
         }}>Export JSON Schema</button>
+        <fieldset className="osdu-exports" disabled={locked}>
+          <h3>OSDU exports</h3>
+          <label>OSDU export scope<select aria-label="OSDU export scope" value={exportScope} onChange={event => setExportScope(event.target.value)}>
+            <option value="selected">Selected class</option><option value="all">All OSDU record classes</option>
+          </select></label>
+          <label>Schema authority<input value={exportAuthority} onChange={event => setExportAuthority(event.target.value)} /></label>
+          <label>Schema source<input value={exportSource} onChange={event => setExportSource(event.target.value)} /></label>
+          <label>Export version override<input placeholder="From OSDU metadata, e.g. 1.4.0" value={exportVersion} onChange={event => setExportVersion(event.target.value)} /></label>
+          <label>Group for unqualified classes<select value={exportGroup} onChange={event => setExportGroup(event.target.value)}>
+            {['master-data', 'reference-data', 'work-product', 'work-product-component', 'dataset'].map(group => <option key={group}>{group}</option>)}
+          </select></label>
+          <p className="muted">Existing group-qualified classes keep their group. Leave version blank to use source metadata; enter a version for new classes. Registrations use INTERNAL / DEVELOPMENT.</p>
+          <button className="export-json" onClick={() => void exportArtifact('schemas')}>Export OSDU schemas + registrations</button>
+          <button className="export-json" onClick={() => void exportArtifact('manifests')}>Export OSDU manifest templates</button>
+          <p className="muted">ZIP downloads include an export report. Manifest examples contain placeholders and must be completed before ingestion.</p>
+          <button className="export-json" onClick={() => void exportArtifact('postgresql')}>Export PostgreSQL DDL (whole model)</button>
+        </fieldset>
+        <fieldset className="lakehouse-exports" disabled={locked}>
+          <h3>Microsoft Fabric Lakehouse</h3>
+          <label>Fabric Lakehouse schema<input value={fabricSchema} onChange={event => setFabricSchema(event.target.value)} /></label>
+          <p className="muted">Whole-model relational Delta tables. ZIP includes a PySpark notebook, Spark SQL DDL, and name/relationship mappings. Attach a default schema-enabled Lakehouse and create this schema before running.</p>
+          <button className="export-json" onClick={() => void exportArtifact('fabric')}>Export Fabric Lakehouse (whole model)</button>
+          <p className="muted">Existing tables are never overwritten. Keys and domain rules are metadata, not enforced constraints. Use Spark, not the read-only SQL analytics endpoint.</p>
+        </fieldset>
         <p className="inspector-note">Powered by the official LinkML metamodel and generators. Solid edges are relationships; dashed edges are inheritance.</p>
       </aside>
     </main>

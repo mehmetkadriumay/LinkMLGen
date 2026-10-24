@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import json
 import os
 import re
 from copy import deepcopy
@@ -11,7 +12,7 @@ from urllib.parse import urlsplit
 
 import yaml
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from jsonschema.exceptions import best_match
 from linkml.generators.jsonschemagen import JsonSchemaGenerator
 from linkml.linter.linter import get_metamodel_validator
@@ -24,6 +25,10 @@ from openai import (
     ContentFilterFinishReasonError, LengthFinishReasonError, OpenAI,
 )
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy.exc import SQLAlchemyError
+
+from osdu_export import export_bundle, export_postgres
+from fabric_export import FABRIC_NOTICES, export_fabric
 
 load_dotenv(Path(__file__).with_name(".env"))
 logger = logging.getLogger(__name__)
@@ -70,10 +75,23 @@ class SchemaInspection:
     warnings: list[str] = field(default_factory=list)
     imports: dict[str, dict[str, Any]] = field(default_factory=dict)
     ranges: list[str] = field(default_factory=list)
+    json_schema: dict[str, Any] | None = None
 
 
 class YamlRequest(BaseModel):
     yaml: str
+
+
+class FabricExportRequest(YamlRequest):
+    target_schema: str = Field(default="dbo", pattern=r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+
+
+class OsduExportRequest(YamlRequest):
+    class_names: list[str] = Field(default_factory=list)
+    authority: str = Field(default="osdu", pattern=r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+    source: str = Field(default="wks", pattern=r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+    version: str | None = Field(default=None, pattern=r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$")
+    group_type: Literal["master-data", "reference-data", "work-product", "work-product-component", "dataset"] = "master-data"
 
 
 class Message(BaseModel):
@@ -212,7 +230,7 @@ def inspect_schema(text: str) -> SchemaInspection:
                 if slot.range not in ranges:
                     result.errors.append(f"{name}.{slot.name}: unknown range {slot.range}.")
         if not result.errors:
-            JsonSchemaGenerator(view.schema, importmap=result.imports).serialize()
+            result.json_schema = json.loads(JsonSchemaGenerator(view.schema, importmap=result.imports).serialize())
             result.schema = json_dumper.to_dict(view.schema)
     except (ValueError, TypeError, KeyError, AttributeError, RecursionError) as exc:
         result.errors.append(f"LinkML validation: {exc}")
@@ -244,9 +262,58 @@ def export_json_schema(request: YamlRequest):
     if result.errors:
         raise HTTPException(422, detail=result.errors)
     return {
-        "json_schema": JsonSchemaGenerator(SchemaDefinition(**result.schema), importmap=result.imports).serialize(),
+        "json_schema": json.dumps(result.json_schema, indent=4),
         "warnings": result.warnings,
     }
+
+
+@app.post("/api/export/osdu/{mode}")
+def export_osdu(mode: Literal["schemas", "manifests"], request: OsduExportRequest):
+    result = inspect_schema(request.yaml)
+    if result.errors:
+        raise HTTPException(422, detail=result.errors)
+    try:
+        view = SchemaView(SchemaDefinition(**result.schema), importmap=result.imports)
+        content = export_bundle(view, result.json_schema, request, mode, result.warnings)
+    except (ValueError, TypeError, KeyError, RecursionError) as exc:
+        logger.warning("OSDU %s export failed: %s", mode, exc)
+        raise HTTPException(422, detail=f"OSDU export: {exc}") from exc
+    return Response(content, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="osdu-{mode}.zip"',
+        "X-Export-Warning-Count": str(len(result.warnings) + (2 if mode == "manifests" else 1)),
+    })
+
+
+@app.post("/api/export/postgresql")
+def export_postgresql(request: YamlRequest):
+    result = inspect_schema(request.yaml)
+    if result.errors:
+        raise HTTPException(422, detail=result.errors)
+    try:
+        content = export_postgres(result.schema, result.imports, result.warnings)
+    except (ValueError, TypeError, KeyError, RecursionError, SQLAlchemyError) as exc:
+        logger.warning("PostgreSQL export failed: %s", exc)
+        raise HTTPException(422, detail=f"PostgreSQL export: {exc}") from exc
+    return Response(content, media_type="application/sql", headers={
+        "Content-Disposition": 'attachment; filename="schema.postgresql.sql"',
+        "X-Export-Warning-Count": str(len(result.warnings)),
+    })
+
+
+@app.post("/api/export/fabric")
+def export_fabric_lakehouse(request: FabricExportRequest):
+    result = inspect_schema(request.yaml)
+    if result.errors:
+        raise HTTPException(422, detail=result.errors)
+    try:
+        content = export_fabric(result.schema, result.imports, result.warnings, request.target_schema)
+    except (ValueError, TypeError, KeyError, RecursionError) as exc:
+        logger.warning("Fabric Lakehouse export failed: %s", exc)
+        raise HTTPException(422, detail=f"Fabric Lakehouse export: {exc}") from exc
+    return Response(content, media_type="application/zip", headers={
+        "Content-Disposition": 'attachment; filename="fabric-lakehouse.zip"',
+        "X-Export-Warning-Count": str(len(result.warnings) + len(FABRIC_NOTICES)),
+    })
 
 
 @app.post("/api/chat")

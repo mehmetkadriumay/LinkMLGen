@@ -117,6 +117,8 @@ code, pre { font-family: Consolas, monospace; }
 .new-slot { background: #f8fafc; border: 1px dashed #cbd9e1; padding: 0 12px 12px; border-radius: 6px; margin-top: 16px; }
 .new-slot button { width: 100%; font-size: 11px; }
 .export-json { margin: 20px 20px 0; width: calc(100% - 40px); }
+.osdu-exports, .lakehouse-exports { border-top: 1px solid #e1e7ed; margin-top: 20px; }
+.osdu-exports .export-json, .lakehouse-exports .export-json { margin: 12px 0 0; width: 100%; }
 .inspector-note { margin: 14px 22px; color: #91a0ad; font-size: 9px; line-height: 1.8; }
 @media (min-width: 1600px) { .workspace { grid-template-columns: 370px minmax(360px, 1fr) 320px; } }
 @media (max-width: 1150px) { .workspace { grid-template-columns: 280px minmax(330px, 1fr) 255px; } .topbar { gap: 18px; padding: 0 16px; } .project-name .badge { display: none; } .panel-title { padding-left: 16px; padding-right: 16px; } h2 { font-size: 14px; } .toolbar { gap: 4px; } .toolbar button, .toolbar .button { font-size: 10px; padding: 8px; } }
